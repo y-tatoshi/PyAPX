@@ -1,0 +1,37 @@
+# PyAPX input file
+
+ENCODING = True
+RANDOM_SAMPLING = 2
+BAYES_SAMPLING = 2
+ENERGY_EVALUATOR = qe
+#PARALLEL_COMMAND = mpirun -np 8    # Default: "mpiexec"
+OPTIMIZER = physbo
+
+# settings for encoding
+ENCODE = NAmod
+WEIGHT = 0.3
+
+# settings for physbo
+SCORE = TS
+NUM_RAND_BASIS = 3000
+
+# settings for "NA", "NAmod"
+NEIGHBOR_SITES
+10   12   18
+10   11   16
+11   12   17
+12   13   15
+10   13   14
+11   14   15
+15   16   18
+13   16   17
+14   17   18
+1   2   5
+2   3   6
+1   3   4
+4   5   8
+5   6   9
+4   6   7
+2   7   8
+3   8   9
+1   7   9

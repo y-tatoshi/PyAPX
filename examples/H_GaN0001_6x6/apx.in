@@ -1,0 +1,13 @@
+# PyAPX input file
+
+ENCODING = True
+RANDOM_SAMPLING = 2
+BAYES_SAMPLING = 50
+ENERGY_EVALUATOR = custom:my_evaluator.run_ising_calculation
+OPTIMIZER = physbo
+
+# settings for encoding
+ENCODE = OH
+
+# settings for physbo
+SCORE = EI
