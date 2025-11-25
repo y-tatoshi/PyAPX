@@ -3,7 +3,7 @@
   <img src="logo/logo_banner.png" alt="PyAPX Logo" width="450">
 </div>
 
-[![arXiv](https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg)](https://arxiv.org/abs/XXXX.XXXXX)
+[![arXiv](https://img.shields.io/badge/arXiv-2511.17972-b31b1b.svg)](http://arxiv.org/abs/2511.17972)
 
 # PyAPX - Python Toolkit for Atomic Configuration Pattern Exploration
 
@@ -20,7 +20,7 @@ A toolkit that integrates DFT codes with Bayesian optimization to explore stable
 
 ### DFT code
 
-- [Quantum ESPRESSO](https://www.quantum-espresso.org/) v.7.3.1 (tested)
+- [Quantum ESPRESSO](https://www.quantum-espresso.org/) v7.3.1 (tested)
 
 ## Installation
 
@@ -72,7 +72,7 @@ OPTIMIZER = physbo
 
 When ENCODING = True, `encoded_candidates.pkl` is generated, which is required for Bayesian sampling.
 Then, schedule the number of random sampling and Bayesian sampling iterations. At least two initial data points are required for Bayesian sampling.
-PyAPX (v.1.0.0) currently supports only Quantum ESPRESSO as a DFT code.
+PyAPX (v1.0.0) currently supports only Quantum ESPRESSO as a DFT code.
 As an energy evaluator, you can also specify user-defined functions instead of DFT codes (see Quick Start example).
 
 ```ini
@@ -164,7 +164,7 @@ Output files:
 
 When publishing the results using PyAPX, we hope that you cite the following article <sup>[1]</sup>. Additionally, please follow the guidelines for [PHYSBO](https://github.com/issp-center-dev/PHYSBO?tab=readme-ov-file#license) and [Quantum ESPRESSO](https://www.quantum-espresso.org/quote/) to acknowledge their usage and cite the relevant references.
 
-[1] A. Kusaba et al., "PyAPX: Python toolkit for atomic configuration pattern exploration", (to appear).
+[1] A. Kusaba et al., "PyAPX: Python toolkit for atomic configuration pattern exploration", arXiv:2511.17972 [cond-mat.mtrl-sci].
 
 PyAPX originates from following our previous studies <sup>[2,3,4]</sup>.
 
