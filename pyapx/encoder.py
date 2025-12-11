@@ -132,7 +132,7 @@ def encode_options(encode="OH", weight=0, use_dimension_reduction=False, reducti
     # Define neighbor_sites only if needed
     if encode in ["NA", "NAmod"]:
         neighbor_sites_data = read_card("apx.in", "NEIGHBOR_SITES")
-        neighbor_sites = np.array([list(map(int, line.split())) for line in neighbor_sites_data])
+        neighbor_sites = [list(map(int, line.split())) for line in neighbor_sites_data]
 
     def onehot():
         """Perform one-hot encoding."""
