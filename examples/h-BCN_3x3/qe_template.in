@@ -14,6 +14,8 @@ forc_conv_thr = 1.d-4
   ntyp = 3
   ecutwfc=60
   ecutrho=240
+  nosym = .true.
+  noinv = .true.
 /
 &electrons
   conv_thr = 1.0d-8
