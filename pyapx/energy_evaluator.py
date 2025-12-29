@@ -6,8 +6,9 @@ Manages energy calculations using QE and other DFT codes
 import os
 import re
 import time
+import shutil
 import pandas as pd
-from .utils import apx_print, read_parallel_command
+from .utils import apx_print, read_parallel_command, read_use_initial_density, read_qe_prefix_and_outdir
 
 def run_qe_calculation_and_extract_energy(input_file, output_file, candidate_id):
     """
@@ -209,6 +210,34 @@ def run_qe_calculation(sample_id, structure_id):
     output_file = f"qe_sample_{sample_id}.out"
     
     try:
+        # Check if USE_INITIAL_DENSITY is enabled
+        use_initial_density = read_use_initial_density()
+        if use_initial_density:
+            # Read prefix and outdir from qe_template.in
+            prefix, outdir = read_qe_prefix_and_outdir()
+            
+            if prefix and outdir:
+                # Source: prefix.save directory in execution directory
+                source_dir = f"{prefix}.save"
+                # Destination: outdir/prefix.save (outdir is at the same level as dft_calc)
+                dest_dir = f"{outdir}/{prefix}.save"
+                
+                if os.path.exists(source_dir) and os.path.isdir(source_dir):
+                    # Ensure outdir directory exists
+                    os.makedirs(outdir, exist_ok=True)
+                    
+                    # Remove existing destination if it exists
+                    if os.path.exists(dest_dir):
+                        shutil.rmtree(dest_dir)
+                    
+                    # Copy prefix.save directory to outdir
+                    shutil.copytree(source_dir, dest_dir)
+                    apx_print(f"Copied initial density from {source_dir} to {dest_dir}")
+                else:
+                    apx_print(f"Warning: Initial density directory {source_dir} not found. Skipping initial density copy.")
+            else:
+                apx_print("Warning: Could not read prefix or outdir from qe_template.in. Skipping initial density copy.")
+        
         # Generate QE input file for candidate structure
         atomic_config = create_qe_input(structure_id, input_file)
         

@@ -444,3 +444,81 @@ def load_encoded_data_from_cache():
     except Exception as e:
         apx_print(f"Error loading cache file: {e}")
         return False, None
+
+def read_use_initial_density():
+    """
+    Read USE_INITIAL_DENSITY setting from apx.in
+    
+    Returns:
+        bool: Whether to use initial density (True if USE_INITIAL_DENSITY = True, False otherwise)
+    """
+    try:
+        use_initial_density_str = read_card_value("apx.in", "USE_INITIAL_DENSITY")
+        use_initial_density = use_initial_density_str.lower() == "true" if use_initial_density_str else False
+        return use_initial_density
+    except Exception as e:
+        apx_print(f"Error reading USE_INITIAL_DENSITY setting: {e}")
+        return False  # Default value
+
+def read_qe_prefix_and_outdir():
+    """
+    Read prefix and outdir from qe_template.in
+    
+    Returns:
+        tuple: (prefix, outdir)
+            - prefix (str): Prefix value from qe_template.in (None if not found)
+            - outdir (str): Outdir value from qe_template.in (None if not found)
+    """
+    try:
+        qe_template_path = "qe_template.in"
+        if not os.path.exists(qe_template_path):
+            return None, None
+        
+        prefix = None
+        outdir = None
+        
+        with open(qe_template_path, "r") as file:
+            lines = file.readlines()
+            inside_control = False
+            
+            for line in lines:
+                stripped_line = line.strip()
+                
+                # Skip empty lines and comments
+                if not stripped_line or stripped_line.startswith("#"):
+                    continue
+                
+                # Detect start of &control section
+                if stripped_line.startswith("&control") or stripped_line.startswith("&CONTROL"):
+                    inside_control = True
+                    continue
+                
+                # Stop reading when encountering another section or end of control
+                if inside_control:
+                    if stripped_line.startswith("/"):
+                        break
+                    if stripped_line.startswith("&"):
+                        break
+                    
+                    # Parse prefix (handle both 'prefix = ...' and 'prefix=' formats)
+                    if "prefix" in stripped_line.lower() and "=" in stripped_line:
+                        # Remove comment if present
+                        line_without_comment = stripped_line.split("#")[0].strip()
+                        if "=" in line_without_comment:
+                            value = line_without_comment.split("=", 1)[1].strip()
+                            # Remove quotes if present
+                            prefix = value.strip("'\"")
+                    
+                    # Parse outdir (handle both 'outdir = ...' and 'outdir=' formats)
+                    if "outdir" in stripped_line.lower() and "=" in stripped_line:
+                        # Remove comment if present
+                        line_without_comment = stripped_line.split("#")[0].strip()
+                        if "=" in line_without_comment:
+                            value = line_without_comment.split("=", 1)[1].strip()
+                            # Remove quotes if present
+                            outdir = value.strip("'\"")
+        
+        return prefix, outdir
+    except Exception as e:
+        apx_print(f"Error reading prefix and outdir from qe_template.in: {e}")
+        return None, None
