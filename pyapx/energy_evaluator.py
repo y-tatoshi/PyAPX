@@ -137,13 +137,18 @@ def create_qe_input(candidate_id, input_file):
     # Get data until next section
     positions = []
     template_atoms = []
-    for line in content[positions_start:]:
+    positions_end = positions_start
+    for i, line in enumerate(content[positions_start:], start=positions_start):
         if line.strip() == "" or any(line.strip().startswith(keyword) for keyword in ["K_POINTS", "CELL_PARAMETERS", "ATOMIC_SPECIES"]):
+            positions_end = i
             break
         line_parts = line.strip().split()
         if len(line_parts) >= 1:
             template_atoms.append(line_parts[0])  # First column element
             positions.append("   ".join(line_parts[1:]))  # Coordinate part
+    else:
+        # If loop didn't break, positions_end is at the end of file
+        positions_end = len(content)
 
     # Count X's and check if they match the number of sites in candidates.csv
     x_count = sum(1 for atom in template_atoms if atom.upper() == "X")
@@ -164,6 +169,10 @@ def create_qe_input(candidate_id, input_file):
             else:
                 atom = template_atom
             file.write(f"{atom}   {position}\n")
+        
+        # Write remaining sections (K_POINTS, etc.) after ATOMIC_POSITIONS
+        if positions_end < len(content):
+            file.writelines(content[positions_end:])
     
     apx_print(f"Generated new Quantum ESPRESSO input file: {output_path}")
     
