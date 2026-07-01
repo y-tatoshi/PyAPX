@@ -3,7 +3,45 @@ PyAPX - Sequential Exploration Module
 Manages coordination between energy evaluator and sampler, executes exploration loops
 """
 
+import inspect
+import os
+
 SAMPLES_CSV_PATH = "samples.csv"
+
+
+def _unpack_sampled_structure(sampled_structure):
+    if isinstance(sampled_structure, dict):
+        return (
+            sampled_structure.get("structure_id"),
+            sampled_structure.get("atomic_config"),
+            sampled_structure.get("mode"),
+        )
+    return sampled_structure, None, None
+
+
+def _call_energy_calculation_func(energy_calculation_func, sample_id, structure_id, atomic_config):
+    if atomic_config is not None:
+        try:
+            signature = inspect.signature(energy_calculation_func)
+            parameters = list(signature.parameters.values())
+            positional = [
+                parameter
+                for parameter in parameters
+                if parameter.kind
+                in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                )
+            ]
+            accepts_varargs = any(
+                parameter.kind == inspect.Parameter.VAR_POSITIONAL
+                for parameter in parameters
+            )
+            if accepts_varargs or len(positional) >= 3:
+                return energy_calculation_func(sample_id, structure_id, atomic_config)
+        except (TypeError, ValueError):
+            pass
+    return energy_calculation_func(sample_id, structure_id)
 
 def run_encoding():
     """
@@ -16,6 +54,13 @@ def run_encoding():
     
     print("")
     apx_print("=== Executing ENCODING ===")
+
+    if not os.path.exists("candidates.csv"):
+        from .on_the_fly import use_on_the_fly_if_no_candidates
+
+        if use_on_the_fly_if_no_candidates():
+            apx_print("candidates.csv not found; skipping enumerated candidate encoding for on-the-fly mode")
+            return True
     
     # Read encoding and dimension reduction settings
     encode_type, weight = read_encode_type_setting()
@@ -62,19 +107,33 @@ def run_sampling_loop(num_iterations, sampling_type, start_sample_id=0, energy_e
     
     Note:
         For Bayesian sampling, the specific optimizer is determined by OPTIMIZER setting in apx.in
-        Currently supports: "physbo"
+        Currently supports: "physbo", "botorch"
         Future optimizers can be added by extending the optimizer selection logic
     """
     # Create samples.csv header (only if file doesn't exist)
     from .utils import ensure_samples_csv_header, apx_print
-    ensure_samples_csv_header()
-    
-    # Get maximum structure ID
-    from .utils import get_max_structure_id
-    max_structure_id = get_max_structure_id()
-    if max_structure_id is None:
-        apx_print("Failed to get maximum structure ID")
+    from .on_the_fly import ON_THE_FLY_MODE, get_candidate_mode, use_on_the_fly_if_no_candidates
+
+    try:
+        ensure_samples_csv_header()
+    except Exception as e:
+        apx_print(f"Failed to initialize samples.csv: {e}")
         return
+    
+    candidate_mode = get_candidate_mode()
+    max_structure_id = None
+    if candidate_mode == ON_THE_FLY_MODE:
+        if not use_on_the_fly_if_no_candidates():
+            apx_print("candidates.csv not found and on-the-fly mode is disabled")
+            return
+        apx_print("Candidate mode: on_the_fly (candidates.csv not found)")
+    else:
+        # Get maximum structure ID
+        from .utils import get_max_structure_id
+        max_structure_id = get_max_structure_id()
+        if max_structure_id is None:
+            apx_print("Failed to get maximum structure ID")
+            return
     
     # Select energy evaluator
     if energy_evaluator.lower() == "qe":
@@ -115,14 +174,17 @@ def run_sampling_loop(num_iterations, sampling_type, start_sample_id=0, energy_e
         # 1. Sampling (different processing for random vs bayes)
         if sampling_type.lower() == "random":
             from .sampler import run_random_sampling
-            sampled_structure_id = run_random_sampling(max_structure_id)
+            sampled_structure = run_random_sampling(max_structure_id, current_sample_id)
         elif sampling_type.lower() == "bayes":
             # Check optimizer setting for Bayesian optimization
             from .utils import read_optimizer
             optimizer = read_optimizer()
             if optimizer.lower() == "physbo":
                 from .sampler import run_physbo_sampling
-                sampled_structure_id = run_physbo_sampling(current_sample_id)
+                sampled_structure = run_physbo_sampling(current_sample_id)
+            elif optimizer.lower() == "botorch":
+                from .sampler import run_botorch_sampling
+                sampled_structure = run_botorch_sampling(current_sample_id)
             else:
                 apx_print(f"Unsupported optimizer for Bayesian sampling: {optimizer}")
                 return
@@ -130,6 +192,8 @@ def run_sampling_loop(num_iterations, sampling_type, start_sample_id=0, energy_e
             apx_print(f"Unsupported sampling type: {sampling_type}")
             return
         
+        sampled_structure_id, sampled_atomic_config, sampled_mode = _unpack_sampled_structure(sampled_structure)
+
         if sampled_structure_id is None:
             apx_print(f"Sample {current_sample_id}: Sampling failed")
             current_sample_id += 1
@@ -138,13 +202,19 @@ def run_sampling_loop(num_iterations, sampling_type, start_sample_id=0, energy_e
         apx_print(f"Sample {current_sample_id}: Selected structure ID {sampled_structure_id}")
         
         # 2. Energy calculation
-        success, total_energy, atomic_config, error_message = energy_calculation_func(current_sample_id, sampled_structure_id)
+        success, total_energy, atomic_config, error_message = _call_energy_calculation_func(
+            energy_calculation_func,
+            current_sample_id,
+            sampled_structure_id,
+            sampled_atomic_config,
+        )
         
         # 3. Record calculation results
         if success:
             with open(SAMPLES_CSV_PATH, "a") as samples_file:
                 # Record in order: sample ID, structure ID, atomic configuration, energy
-                atomic_config_str = ','.join(atomic_config)
+                atomic_config_to_record = atomic_config if atomic_config is not None else sampled_atomic_config
+                atomic_config_str = ','.join(str(atom) for atom in atomic_config_to_record)
                 samples_file.write(f"{current_sample_id},{sampled_structure_id},{atomic_config_str},{total_energy}\n")
         else:
             apx_print(f"Sample {current_sample_id}: Skipped - {error_message}")

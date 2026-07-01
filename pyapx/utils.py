@@ -96,29 +96,35 @@ def get_max_structure_id():
 
 def read_card_value(file_path, card_name):
     """
-    Read card value from input file (format with "=")
-    
-    Args:
-        file_path (str): Path to input file
-        card_name (str): Card name
-    
-    Returns:
-        str: Card value (None if not found)
+    Read a KEY = VALUE style setting from an input file.
+
+    This parser intentionally does exact key matching and strips comments, so
+    settings such as
+
+        SCORE = TS    # acquisition function
+        BOTORCH_DEVICE=cuda
+
+    are read as "TS" and "cuda" respectively.
     """
+    target = str(card_name).strip().upper()
+
     try:
         with open(file_path, "r") as file:
-            lines = file.readlines()
-            
-        for line in lines:
-            stripped_line = line.strip()
-            if stripped_line.startswith(f"{card_name} ="):
-                # Extract value after "="
-                value = stripped_line.split("=", 1)[1].strip()
-                return value
+            for raw_line in file:
+                # Remove inline comments and surrounding whitespace.
+                line = raw_line.split("#", 1)[0].strip()
+                if not line or "=" not in line:
+                    continue
+
+                key, value = line.split("=", 1)
+                if key.strip().upper() == target:
+                    return value.strip()
+
         return None
     except Exception as e:
         apx_print(f"Error reading card value {card_name}: {e}")
         return None
+
 
 def read_energy_evaluator():
     """
@@ -209,8 +215,15 @@ def ensure_samples_csv_header():
     samples_csv_path = "samples.csv"
     
     if not os.path.exists(samples_csv_path):
-        # Get number of sites from structure ID 0
-        _, num_sites = get_atom_types_and_num_sites_from_candidates()
+        if os.path.exists("candidates.csv"):
+            # Get number of sites from structure ID 0
+            _, num_sites = get_atom_types_and_num_sites_from_candidates()
+        else:
+            from .on_the_fly import load_on_the_fly_space, use_on_the_fly_if_no_candidates
+
+            if not use_on_the_fly_if_no_candidates():
+                raise FileNotFoundError("candidates.csv not found")
+            num_sites = load_on_the_fly_space().num_sites
         
         header_parts = ["sample_id", "structure_id"]
         for i in range(num_sites):
@@ -222,25 +235,44 @@ def ensure_samples_csv_header():
 
 def read_encode_type_setting():
     """
-    Read encode type setting from apx.in
-    
+    Read encode type setting from apx.in.
+
+    ENCODE_TYPE is the preferred key. ENCODE is accepted as a legacy alias so
+    existing input files using "ENCODE = NAmod" still work.
+
     Returns:
         tuple: (encode_type, weight)
             - encode_type (str): Encoding method ("OH", "NA", or "NAmod")
             - weight (float): Weight for neighbor atom encoding
     """
     try:
-        encode_type = read_card_value("apx.in", "ENCODE_TYPE")
-        if not encode_type:
-            encode_type = "OH"  # Default
-        
+        encode_type_raw = (
+            read_card_value("apx.in", "ENCODE_TYPE")
+            or read_card_value("apx.in", "ENCODE")
+            or "OH"
+        )
+
+        encode_key = encode_type_raw.strip().lower()
+        encode_map = {
+            "oh": "OH",
+            "na": "NA",
+            "namod": "NAmod",
+        }
+        if encode_key not in encode_map:
+            raise ValueError(
+                f"Unsupported ENCODE_TYPE/ENCODE: {encode_type_raw}. "
+                "Choose OH, NA, or NAmod."
+            )
+        encode_type = encode_map[encode_key]
+
         weight_str = read_card_value("apx.in", "WEIGHT")
         weight = float(weight_str) if weight_str else 0.0
-        
+
         return encode_type, weight
     except Exception as e:
         apx_print(f"Error reading encode type setting: {e}")
-        return "OH", 0.0  # Default values
+        return "OH", 0.0
+
 
 def read_encoding_setting():
     """
@@ -259,67 +291,104 @@ def read_encoding_setting():
 
 def read_dimension_reduction_setting():
     """
-    Read dimension reduction settings from apx.in
-    
+    Read dimension reduction settings from apx.in.
+
+    For PCA_N_COMPONENTS, the following forms are supported:
+      - integer, e.g. 30
+      - float in (0, 1), e.g. 0.95, for sklearn's explained-variance target
+      - none/default, to use sklearn's default
+
     Returns:
         tuple: (use_dimension_reduction, method, params)
             - use_dimension_reduction (bool): Whether to use dimension reduction
             - method (str): Method ("PCA" or "AUTOENCODER")
             - params (dict): Parameters for the selected method
     """
+
+    def _parse_bool(value, default=False):
+        if value is None:
+            return default
+        return str(value).strip().lower() in ["true", "t", "yes", "y", "1", "on"]
+
+    def _parse_optional_int(value, name, default=None):
+        if value is None or str(value).strip() == "":
+            return default
+        text = str(value).strip().lower()
+        if text in ["none", "default"]:
+            return None
+        try:
+            return int(text)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an integer, none, or omitted: {value}") from exc
+
+    def _parse_pca_n_components(value):
+        if value is None or str(value).strip() == "":
+            return None
+        text = str(value).strip().lower()
+        if text in ["none", "default"]:
+            return None
+        if text == "mle":
+            return "mle"
+
+        try:
+            number = float(text)
+        except ValueError as exc:
+            raise ValueError(
+                f"PCA_N_COMPONENTS must be an integer, a float in (0, 1), "
+                f"mle, none, or omitted: {value}"
+            ) from exc
+
+        if 0.0 < number < 1.0:
+            return number
+        if number >= 1.0 and abs(number - round(number)) < 1.0e-12:
+            return int(round(number))
+        raise ValueError(
+            f"PCA_N_COMPONENTS must be an integer >= 1 or a float in (0, 1): {value}"
+        )
+
     try:
         use_dimension_reduction_str = read_card_value("apx.in", "USE_DIMENSION_REDUCTION")
-        use_dimension_reduction = use_dimension_reduction_str.lower() == "true" if use_dimension_reduction_str else False
-        
+        use_dimension_reduction = _parse_bool(use_dimension_reduction_str, default=False)
+
         if use_dimension_reduction:
-            # Read method
-            method = read_card_value("apx.in", "DIMENSION_REDUCTION_METHOD")
-            if not method:
-                method = "PCA"  # Default
-            
+            method = read_card_value("apx.in", "DIMENSION_REDUCTION_METHOD") or "PCA"
+            method = method.strip().upper()
+
             random_state_str = read_card_value("apx.in", "AUTOENCODER_RANDOM_STATE")
-            random_state = int(random_state_str) if random_state_str else 42
-            
-            if method.upper() == "PCA":
-                # Read PCA-specific parameters
+            random_state = _parse_optional_int(random_state_str, "AUTOENCODER_RANDOM_STATE", default=42)
+
+            if method == "PCA":
                 pca_n_components_str = read_card_value("apx.in", "PCA_N_COMPONENTS")
-                if pca_n_components_str:
-                    if pca_n_components_str.lower() == "none":
-                        pca_n_components = None  # sklearn default
-                    else:
-                        pca_n_components = int(pca_n_components_str)
-                else:
-                    pca_n_components = None  # sklearn default
-                
-                # For PCA, random_state is optional (only needed for randomized SVD)
-                # Use sklearn default (None) unless explicitly set
+                pca_n_components = _parse_pca_n_components(pca_n_components_str)
+
+                # PCA_RANDOM_STATE is only used by sklearn for randomized/arpack
+                # solvers, but keeping it fixed is useful for reproducibility.
                 pca_random_state_str = read_card_value("apx.in", "PCA_RANDOM_STATE")
-                pca_random_state = int(pca_random_state_str) if pca_random_state_str else None
-                
+                pca_random_state = _parse_optional_int(pca_random_state_str, "PCA_RANDOM_STATE", default=None)
+
                 params = {
                     'n_components': pca_n_components,
                     'random_state': pca_random_state
                 }
-            elif method.upper() == "AUTOENCODER":
-                # Read Auto Encoder specific parameters
+            elif method == "AUTOENCODER":
                 latent_dim_str = read_card_value("apx.in", "AUTOENCODER_LATENT_DIM")
                 latent_dim = int(latent_dim_str) if latent_dim_str else 20
-                
+
                 hidden_layers_str = read_card_value("apx.in", "AUTOENCODER_HIDDEN_LAYERS")
                 if hidden_layers_str:
                     hidden_layers = tuple(int(x.strip()) for x in hidden_layers_str.split(','))
                 else:
                     hidden_layers = (128, 64)
-                
+
                 learning_rate_str = read_card_value("apx.in", "AUTOENCODER_LEARNING_RATE")
                 learning_rate = float(learning_rate_str) if learning_rate_str else 0.001
-                
+
                 epochs_str = read_card_value("apx.in", "AUTOENCODER_EPOCHS")
                 epochs = int(epochs_str) if epochs_str else 100
-                
+
                 batch_size_str = read_card_value("apx.in", "AUTOENCODER_BATCH_SIZE")
                 batch_size = int(batch_size_str) if batch_size_str else 1024
-                
+
                 params = {
                     'latent_dim': latent_dim,
                     'hidden_layers': hidden_layers,
@@ -334,11 +403,12 @@ def read_dimension_reduction_setting():
         else:
             method = None
             params = None
-        
+
         return use_dimension_reduction, method, params
     except Exception as e:
         apx_print(f"Error reading dimension reduction settings: {e}")
-        return False, None, None  # Default values
+        return False, None, None
+
 
 def read_autoencoder_setting():
     """
@@ -358,8 +428,8 @@ def read_autoencoder_setting():
 
 def read_physbo_setting():
     """
-    Read PHYSBO settings from apx.in
-    
+    Read PHYSBO settings from apx.in.
+
     Returns:
         tuple: (score, num_rand_basis)
             - score (str): Score function ("TS", "EI", "PI")
@@ -367,19 +437,129 @@ def read_physbo_setting():
     """
     try:
         score = read_card_value("apx.in", "SCORE")
-        if score:
-            # Read num_rand_basis only if score is "TS"
-            if score == "TS":
-                num_rand_basis_str = read_card_value("apx.in", "NUM_RAND_BASIS")
-                num_rand_basis = int(num_rand_basis_str) if num_rand_basis_str else 3000
-            else:
-                num_rand_basis = 3000  # Default value for TS, not used for other scores
-            return score, num_rand_basis
+        score = score.strip().upper() if score else "TS"
+
+        if score == "TS":
+            num_rand_basis_str = read_card_value("apx.in", "NUM_RAND_BASIS")
+            num_rand_basis = int(num_rand_basis_str) if num_rand_basis_str else 3000
         else:
-            return "TS", 3000  # Default values
+            num_rand_basis = 3000
+
+        return score, num_rand_basis
     except Exception as e:
         apx_print(f"Error reading PHYSBO settings: {e}")
-        return "TS", 3000  # Default values
+        return "TS", 3000
+
+
+def read_botorch_setting():
+    """
+    Read BoTorch settings from apx.in using a compact schema.
+    """
+    truthy = {"true", "t", "yes", "y", "1", "on"}
+    bool_parser = lambda value: str(value).strip().lower() in truthy
+    lower = lambda value: str(value).strip().lower()
+    upper = lambda value: str(value).strip().upper()
+    text = lambda value: str(value).strip()
+    schema = [
+        ("score", ("SCORE",), upper, "TS"),
+        ("device", ("BOTORCH_DEVICE",), text, "auto"),
+        ("dtype", ("BOTORCH_DTYPE",), lower, "float64"),
+        ("batch_size", ("BOTORCH_BATCH_SIZE",), int, 65536),
+        ("maxiter", ("BOTORCH_MAXITER",), int, 100),
+        ("xi", ("BOTORCH_XI",), float, 0.0),
+        ("input_transform", ("BOTORCH_INPUT_TRANSFORM", "BOTORCH_SCALING"), lower, "unit_cube"),
+        ("gp_kernel", ("BOTORCH_GP_KERNEL",), lower, "default"),
+        ("standardize_y", ("BOTORCH_STANDARDIZE_Y",), bool_parser, False),
+        ("discrete_chunk_size", ("BOTORCH_DISCRETE_CHUNK_SIZE",), int, 4096),
+        ("hamming_lengthscale", ("BOTORCH_HAMMING_LENGTHSCALE",), float, 0.2),
+        ("ot_lengthscale", ("BOTORCH_OT_LENGTHSCALE",), float, 0.5),
+        ("ot_atom_mismatch_penalty", ("BOTORCH_OT_ATOM_MISMATCH_PENALTY",), float, 1.0),
+        ("ot_sinkhorn_epsilon", ("BOTORCH_OT_SINKHORN_EPSILON",), float, 0.05),
+        ("ot_sinkhorn_iterations", ("BOTORCH_OT_SINKHORN_ITERATIONS",), int, 30),
+        ("ot_chunk_size", ("BOTORCH_OT_CHUNK_SIZE",), int, 1024),
+        ("use_local_env", ("BOTORCH_USE_LOCAL_ENV",), bool_parser, False),
+        ("local_env_type", ("BOTORCH_LOCAL_ENV_TYPE",), text, "NA"),
+        ("env_distance", ("BOTORCH_ENV_DISTANCE",), lower, "l1"),
+        ("env_lengthscale", ("BOTORCH_ENV_LENGTHSCALE",), float, 0.2),
+        ("ot_env_mismatch_penalty", ("BOTORCH_OT_ENV_MISMATCH_PENALTY",), float, 1.0),
+        ("local_env_cache", ("BOTORCH_LOCAL_ENV_CACHE",), text, "local_env_candidates.pkl"),
+        ("sa_screening", ("BOTORCH_SA_SCREENING",), bool_parser, False),
+        ("sa_score", ("BOTORCH_SA_SCORE",), upper, ""),
+        ("sa_initial_pool_size", ("BOTORCH_SA_INITIAL_POOL_SIZE",), int, 65536),
+        ("sa_chains", ("BOTORCH_SA_CHAINS",), int, 1024),
+        ("sa_steps", ("BOTORCH_SA_STEPS",), int, 500),
+        ("sa_eval_batch_size", ("BOTORCH_SA_EVAL_BATCH_SIZE",), int, 4096),
+        ("sa_initial_temperature", ("BOTORCH_SA_INITIAL_TEMPERATURE",), float, 1.0),
+        ("sa_final_temperature", ("BOTORCH_SA_FINAL_TEMPERATURE",), float, 0.01),
+        ("sa_random_fraction", ("BOTORCH_SA_RANDOM_FRACTION",), float, 0.05),
+        ("sa_swap_neighbors", ("BOTORCH_SA_SWAP_NEIGHBORS",), bool_parser, True),
+        ("on_the_fly_sa_restarts", ("ON_THE_FLY_SA_RESTARTS", "SA_NUM_RESTARTS"), int, None),
+        ("on_the_fly_sa_steps", ("ON_THE_FLY_SA_STEPS", "SA_NUM_STEPS"), int, None),
+        (
+            "on_the_fly_sa_initial_temperature",
+            ("ON_THE_FLY_SA_INITIAL_TEMPERATURE", "SA_INITIAL_TEMPERATURE"),
+            float,
+            None,
+        ),
+        (
+            "on_the_fly_sa_cooling_rate",
+            ("ON_THE_FLY_SA_COOLING_RATE", "SA_COOLING_RATE"),
+            float,
+            None,
+        ),
+    ]
+
+    settings = {}
+    for key, names, parser, default in schema:
+        value = None
+        source = names[0]
+        for name in names:
+            value = read_card_value("apx.in", name)
+            if value is not None and str(value).strip() != "":
+                source = name
+                break
+        if value is None or str(value).strip() == "":
+            settings[key] = default
+            continue
+        try:
+            settings[key] = parser(value)
+        except (TypeError, ValueError):
+            apx_print(f"Invalid {source}: {value}; using default {default}")
+            settings[key] = default
+
+    local_env_type_key = str(settings["local_env_type"]).strip().lower()
+    local_env_type_map = {
+        "na": "NA",
+        "namod": "NAmod",
+    }
+    if local_env_type_key not in local_env_type_map:
+        raise ValueError(
+            f"Unsupported BOTORCH_LOCAL_ENV_TYPE: {settings['local_env_type']}. "
+            "Choose NA or NAmod."
+        )
+    settings["local_env_type"] = local_env_type_map[local_env_type_key]
+
+    env_distance_key = str(settings["env_distance"]).strip().lower()
+    env_distance_map = {
+        "l1": "l1",
+        "manhattan": "l1",
+        "l2": "l2",
+        "euclidean": "l2",
+    }
+    if env_distance_key not in env_distance_map:
+        raise ValueError(
+            f"Unsupported BOTORCH_ENV_DISTANCE: {settings['env_distance']}. "
+            "Choose l1 or l2."
+        )
+    settings["env_distance"] = env_distance_map[env_distance_key]
+
+    if settings["env_lengthscale"] <= 0:
+        raise ValueError("BOTORCH_ENV_LENGTHSCALE must be positive")
+    if settings["ot_env_mismatch_penalty"] < 0:
+        raise ValueError("BOTORCH_OT_ENV_MISMATCH_PENALTY must be non-negative")
+
+    return settings
+
 
 def read_optimizer():
     """

@@ -95,13 +95,15 @@ def run_qe_calculation_and_extract_energy(input_file, output_file, candidate_id)
     return total_energy, None
 
 
-def create_qe_input(candidate_id, input_file):
+def create_qe_input(candidate_id, input_file, atomic_config=None):
     """
     Read specified structure ID row from candidates.csv and generate QE input file
     
     Args:
         candidate_id (int): Structure ID to read from candidates.csv
         input_file (str): QE input filename to generate
+        atomic_config (list): On-the-fly atomic configuration, used when
+            candidates.csv is absent
     
     Returns:
         list: Atomic configuration data
@@ -113,6 +115,20 @@ def create_qe_input(candidate_id, input_file):
     # Ensure dft_calc directory exists
     dft_calc_dir = "dft_calc"
     os.makedirs(dft_calc_dir, exist_ok=True)
+
+    if atomic_config is not None or not os.path.exists(csv_file):
+        if atomic_config is None:
+            raise ValueError("atomic_config is required when candidates.csv is not available")
+        from .on_the_fly import write_qe_input_from_atomic_config
+
+        atomic_config_row = write_qe_input_from_atomic_config(
+            atomic_config,
+            input_file,
+            qe_template_path=input_template,
+            output_dir=dft_calc_dir,
+        )
+        apx_print(f"Generated new Quantum ESPRESSO input file: dft_calc/{input_file}")
+        return atomic_config_row
 
     # Read only the row with specific structure ID
     df = pd.read_csv(csv_file)
@@ -180,7 +196,7 @@ def create_qe_input(candidate_id, input_file):
     return atomic_config_row  # Return atomic configuration data
 
 
-def run_qe_calculation(sample_id, structure_id):
+def run_qe_calculation(sample_id, structure_id, atomic_config=None):
     """
     Execute QE calculation for structure
     
@@ -239,7 +255,7 @@ def run_qe_calculation(sample_id, structure_id):
                 apx_print("Warning: Could not read prefix or outdir from qe_template.in. Skipping initial density copy.")
         
         # Generate QE input file for candidate structure
-        atomic_config = create_qe_input(structure_id, input_file)
+        atomic_config = create_qe_input(structure_id, input_file, atomic_config=atomic_config)
         
         # Execute QE calculation and extract energy
         total_energy, error_message = run_qe_calculation_and_extract_energy(input_file, output_file, structure_id)
