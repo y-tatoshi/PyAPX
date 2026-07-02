@@ -202,16 +202,9 @@ Output files:
 - `dft_calc/qe_sample_[ID].in`: Generated QE input files
 - `dft_calc/qe_sample_[ID].out`: QE calculation output files
 
-## References
+## Fork notice
 
-When publishing the results using PyAPX, we hope that you cite the following article <sup>[1]</sup>. Additionally, please follow the guidelines for [PHYSBO](https://github.com/issp-center-dev/PHYSBO?tab=readme-ov-file#license) and [Quantum ESPRESSO](https://www.quantum-espresso.org/quote/) to acknowledge their usage and cite the relevant references.
+This repository is an unofficial experimental fork of PyAPX. For stable, reproducible, or citable use, please use the official PyAPX repository.
 
-[1] A. Kusaba et al., "PyAPX: Python toolkit for atomic configuration pattern exploration", arXiv:2511.17972 [cond-mat.mtrl-sci].
-
-PyAPX originates from following our previous studies <sup>[2,3,4]</sup>.
-
-[2] A. Kusaba et al., "Exploration of a large-scale reconstructed structure on GaN(0001) surface by Bayesian optimization", *Applied Physics Letters* **120**, 021602 (2022).
-
-[3] K. Kawka et al., "Augmentation of the Electron Counting Rule with Ising Model", *Journal of Applied Physics* **135**, 225302 (2024).
-
-[4] T. Hara et al., "Exploration of Stable Atomic Configurations in Graphene-like BCN Systems by Density Functional Theory and Bayesian Optimization", *Crystal Growth & Design* **25**, 6719-6726 (2025).
+Modifications in this fork:
+Copyright (c) 2026 Tatoshi YONEMORI
